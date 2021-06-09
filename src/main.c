@@ -49,7 +49,8 @@ typedef struct player player;
 typedef struct unit unit;
 
 struct player {
-	int royalty_count;
+	int castle_x, castle_y;
+	int royalty_count, move_count;
 	const char name[MAXLEN];
 };
 
@@ -57,11 +58,10 @@ struct unit {
 	const char symbol;
 	player* owner;
 	int mov_x, mov_y, mov_diag;
+	int already_moved;
 };
 
-/* uboard is a 2d array of pointers to units
- * 	these units should "live" in player->army
- */
+/* uboard is a 2d array of pointers to units */
 struct board {
 	unit* uboard[BWIDTH][BHEIGHT];
 	unsigned int board[BWIDTH][BHEIGHT];
@@ -70,6 +70,7 @@ struct board {
 // TODO: can i fix the width of these given the board dimensions?
 struct move {
 	int x, int y;
+	unit* u;
 	move* next;
 };
 
@@ -94,13 +95,39 @@ is_mounted(unit* u){
  * 	and delta_x (or delta_y, since same) within limits
  */
 
-// TODO:
+// TODO: ** necessary?
 void
-new_move(x, y, move* head){
-	move* m = ecalloc(1, sizeof(move));
+add_move(int x, int y, unit* u, move** head){
+	move* m, * t;
+
+	if (!head)
+		return;
+
+	m = ecalloc(1, sizeof(move));
 	m->x = x;
 	m->y = y;
+	m->u = u;
+	m->next = NULL;
 
+	if (!*head){
+		*head = m;
+
+	} else {
+		for (t=*head;t && t->next;t=t->next);
+		if (t)
+			t->next = m;
+	}
+}
+
+void
+clean_moves(move* head){
+	move* m;
+
+	while (head){
+		m = head->next;
+		free(head);
+		head = m;
+	}
 }
 
 /* if space is occupied, or a mountain, or a hill and u is mounted, or
@@ -118,6 +145,13 @@ is_pathable(board g, unit* u, int x, int y, int new_x, int new_y){
 	return 1;
 }
 
+/* 1. Check unobstructed line of sight
+ * 	Check terrain and other units
+ * 2. Check destination is not mountain, not castle wall, or not hill if unit
+ * 	is mounted
+ * 3. Check destination is within movement pattern of unit
+ * 	either along a diagonal or along a horizontal or vertical
+ */
 move*
 generate_moves(board g, int x, int y){
 	int i;
@@ -133,7 +167,7 @@ generate_moves(board g, int x, int y){
 			continue;
 
 		if (is_pathable(g, u, x, y, i, y))
-			new_move(i, y, moves);
+			add_move(i, y, u, &moves);
 	}
 
 	/* vertical */
@@ -142,7 +176,7 @@ generate_moves(board g, int x, int y){
 			continue;
 
 		if (is_pathable(g, u, x, y, x, j))
-			new_move(x, j, moves);
+			add_move(x, j, u, &moves);
 	}
 
 	/* diagonal from bottom left to top right */
@@ -151,7 +185,7 @@ generate_moves(board g, int x, int y){
 			continue;
 
 		if (is_pathable(g, u, x, y, i, j))
-			new_move(i, j, moves);
+			add_move(i, j, u, &moves);
 	}
 
 	/* diagonal from top left to bottom right */
@@ -160,22 +194,60 @@ generate_moves(board g, int x, int y){
 			continue;
 
 		if (is_pathable(g, u, x, y, i, j))
-			new_move(i, j, moves);
+			add_move(i, j, u, &moves);
 	}
 
 	return moves;
 }
 
-/* 1. Check unobstructed line of sight
- * 	Check terrain and other units
- * 2. Check destination is not mountain, not castle wall, or not hill if unit
- * 	is mounted
- * 3. Check destination is within movement pattern of unit
- * 	either along a diagonal or along a horizontal or vertical
+/* init phase
+ *	get player count
+ *	get player names
+ *	initialize units for each player
+ *	
+ *
+ *
  */
-int
-is_move_valid(board g, unit* u, int x, int y, int new_x, int new_y){
-	int i;
 
-	for (i=0;i < 
-}
+/* setup phase
+ *	control what on the board is visible
+ *	everyone makes local edits to the board
+ *	edits are then committed to the server's board
+ *	for spaces chosen as castle, if mountain or hill
+ *		override that information
+ */
+
+/* for each player (use while loop on circularly linked list?)
+ *	// TODO: better way to store this information than in the unit?
+ * 	set already_moved for all units owned by player to 0
+ *
+ * 	while moves left to make or turn not ended (at least one move)
+ * 		wait for spot on grid to be selected
+ * 			if g->uboard[x][y]->owner != cur_player
+ * 				do nothing
+ *			else if g->uboard[x][y]->already_moved
+ *				do nothing
+ * 			else
+ * 				generate_moves
+ * 				draw_moves
+ *				wait for new spot on grid to be selected
+ *					if x, y not in moves
+ *						"let go" of unit
+ *						"hold on" to moves in case reselected
+ *					if x, y in moves && !u->already_moved
+ *						g->uboard[x][y] = NULL
+ *						if ( (other = g->uboard[new_x][new_y]) ){
+ *							if (is_royalty(other))
+ *								other->owner->royalty_count--;
+ *							free(other);
+ *						}
+ *						g->uboard[new_x][new_y] = u
+ *						clean_moves(moves);
+ *						moves = NULL;
+ *
+ *						u->already_moved = 1;
+ *						
+ *						if (g->board[new_x][new_y] & IsCastle)
+ *							// find player who owns castle
+ *							// that player loses! remove from list
+ */
